@@ -1,7 +1,6 @@
 import { OpenAI } from "openai";
 import pdf from "pdf-parse";
 import formidable from "formidable";
-import { createWorker } from "tesseract.js";
 
 export const config = { api: { bodyParser: false } };
 
@@ -27,35 +26,19 @@ Rules:
 - If a field is missing, leave "".
 - Dates in YYYY-MM-DD.
 - Keep coverage limits/deductibles as text.
-- English for keys and output text.
+- English only.
 - Infer policy_type if possible.
 - confidence between 0 and 1.
 - Output ONLY JSON.`;
 
 function parseForm(req) {
-  const form = formidable({ multiples: false, maxFileSize: 25 * 1024 * 1024 });
+  const form = formidable({ multiples: false, maxFileSize: 10 * 1024 * 1024 });
   return new Promise((resolve, reject) => {
     form.parse(req, (err, fields, files) => {
       if (err) return reject(err);
       resolve({ fields, files });
     });
   });
-}
-
-async function extractTextFromFile(file) {
-  const fs = await import("node:fs/promises");
-  const buf = await fs.readFile(file.filepath);
-  const mime = file.mimetype || "";
-
-  if (mime.includes("pdf")) {
-    const data = await pdf(buf);
-    return (data.text || "").trim();
-  }
-
-  const worker = await createWorker("eng");
-  const { data: { text } } = await worker.recognize(buf);
-  await worker.terminate();
-  return (text || "").trim();
 }
 
 export default async function handler(req, res) {
@@ -66,8 +49,17 @@ export default async function handler(req, res) {
     const file = files.file;
     if (!file) return res.status(400).json({ error: "No file" });
 
-    const rawText = await extractTextFromFile(file);
-    if (!rawText) return res.status(400).json({ error: "Empty text after OCR" });
+    const mime = file.mimetype || "";
+    if (!mime.includes("pdf")) {
+      return res.status(400).json({ error: "Images (OCR) are not supported on Vercel. Please upload a PDF, or use the VPS backend for OCR." });
+    }
+
+    const fs = await import("node:fs/promises");
+    const buf = await fs.readFile(file.filepath);
+
+    const data = await pdf(buf);
+    const rawText = (data.text || "").trim();
+    if (!rawText) return res.status(400).json({ error: "Empty text extracted from PDF" });
 
     const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const completion = await client.chat.completions.create({
@@ -87,3 +79,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "Analysis failed", details: String(e?.message || e) });
   }
 }
+
