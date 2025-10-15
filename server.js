@@ -7,10 +7,47 @@ import OpenAI from 'openai';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// CORS básico
 app.use(cors({ origin: '*', credentials: false }));
 
-// health
+// Multer: límite 10 MB (bueno para plan free de Render)
+const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } });
+
+// --------- Esquema y prompt ----------
+const SCHEMA = {
+  document_info: {
+    carrier: "", policy_number: "", insured_name: "",
+    effective_date: "", expiration_date: "", policy_type: ""
+  },
+  summary: "",
+  coverages: [{ name: "", limit: "", deductible: "", notes: "" }],
+  exclusions: [""],
+  endorsements: [""],
+  premiums_fees: { annual_premium: "", fees: [{ name: "", amount: "" }] },
+  red_flags: [""],
+  recommendations: [""],
+  confidence: 0.0
+};
+
+const SYSTEM_PROMPT = `You are an INSURANCE POLICY ANALYST.
+Return STRICTLY a valid JSON matching this schema:
+${JSON.stringify(SCHEMA)}
+Rules:
+- If a field is missing, leave "".
+- Dates in YYYY-MM-DD.
+- Keep coverage limits/deductibles as text.
+- English only.
+- Infer policy_type if possible.
+- confidence between 0 and 1.
+- Output ONLY JSON.`;
+
+// Cliente OpenAI
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// --------- Rutas ----------
 app.get('/healthz', (_req, res) => res.status(200).send('ok'));
+
 app.post('/analyze', upload.single('file'), async (req, res) => {
   try {
     // Parche: validar que realmente subieron un archivo multipart con el campo "file"
@@ -54,3 +91,7 @@ app.post('/analyze', upload.single('file'), async (req, res) => {
   }
 });
 
+// Escuchar puerto
+app.listen(PORT, () => {
+  console.log(`Analyzer on http://0.0.0.0:${PORT}`);
+});
